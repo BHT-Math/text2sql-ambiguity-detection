@@ -21,7 +21,7 @@ The three pipelines:
 |---|---|---|
 | **a-Interact** (end-to-end agentic) | `bird_interact.agent`, `bird_interact.detection` | Drives the full ReAct loop (`ask`, `execute_sql`, `get_schema`, `submit`) against Postgres + an LLM; reports normalized reward. Methods: `baseline` (raw ReAct), `direct` (Si-1 only), `union` (Si-1 ∪ Mcs-1). |
 | **Detection-only** | `bird_interact.detection_only` | Generates clarification questions, routes them through a frozen encoder onto GT terms. Methods: `direct` (Si-1), `direct_multi` (Si-10), `mga` (Mcs-1), `se_ast` (Mcs-10). Per-term `Si-1 ∪ Mcs-1` union and an encoder-replay tool live in the aggregator. |
-| **AMBROSIA cross-benchmark** | `ambrosia` (top-level) | Runs the four arms (`baseline`, `direct` = Si-1, `union_mcs` = Si-1 ∪ Mcs-10, `union_spmi` = Si-1 ∪ Mcs-1) against the AMBROSIA SQLite databases and scores by execution equivalence. |
+| **AMBROSIA cross-benchmark** | `ambrosia` (standalone package, separate from `bird_interact`) | Runs the four arms (`baseline`, `direct` = Si-1, `union_mcs` = Si-1 ∪ Mcs-10, `union_spmi` = Si-1 ∪ Mcs-1) against the AMBROSIA SQLite databases and scores by execution equivalence. |
 
 CLI flags use the historic short names (`direct`, `union`, etc.); paper-table
 rows use the `Si-N` / `Mcs-N` labels.
@@ -87,9 +87,9 @@ recipes in `k8s/vllm_server_*.yaml`.
 
 | Pipeline (full split) | Si-1 / direct | Si-10 / direct_multi | Mcs-1 / mga | Mcs-10 / se_ast | Si-1 ∪ Mcs-1 / union |
 |---|---|---|---|---|---|
-| a-Interact lite-300 (300 samples) | ≈1-1.5 h | — | — | — | ≈1-1.5 h |
+| a-Interact lite-300 (300 samples; baseline ≈1.5-2 h) | ≈2-3.5 h | — | — | — | ≈3 h |
 | Detection-only lite-300 (300), from scratch | ~20-40 min | ~3-5 h | ~1-2 h | ~8-12 h | union is post-hoc (no LLM calls) |
-| AMBROSIA (1,149 ambiguous of 3,819) | ≈25 min | — | — | ≈45 min (union_mcs) | ≈30 min (union_spmi) |
+| AMBROSIA (1,149 ambiguous of 3,819; baseline ≈20 min) | ≈1.5 h | — | — | ≈2.9 h (union_mcs) | ≈1.9 h (union_spmi) |
 
 Detection-only figures are **from-scratch** runs (generation-dominated, scaling
 with the per-method call count). The **replay** path — `scripts/replay_encoder.sh`
@@ -97,10 +97,10 @@ when the clarification questions already exist — is encoder-only and runs in
 **minutes** (~10x cheaper for the 11-call methods). Anchored to GLM-4.5-Air with
 reasoning; `--no_thinking` / faster endpoints are quicker. See `REPRODUCING.md` §2.
 
-Quick sanity-check NRs (a-Interact lite-300, paper Table tab:agentic-nr-lite300):
-GLM-4.5-Air baseline 13.2 % → union 16.0 %; MiniMax-M2.5 17.9 → 20.1;
-Qwen3.5-122B 23.6 → 27.6. If your union arm doesn't beat the baseline by at
-least ~+2 pp on MM / Qwen, something is mis-configured.
+Quick sanity-check NRs (a-Interact lite-300, baseline → Si-1 → Si-1 ∪ Mcs-1):
+GLM-4.5-Air 13.0 → 20.4 → 20.2; MiniMax-M2.5 18.2 → 24.6 → 25.2;
+Qwen3.5-122B 24.3 → 26.4 → 27.1. Both detection arms beat the ReAct baseline on
+all three models; if they don't, something is mis-configured.
 
 To use your own prompts, pass `--analysis_prompt_file path/to/prompt.txt` to
 `run_detection.sh` (replaces the shared analysis prompt for all four methods),

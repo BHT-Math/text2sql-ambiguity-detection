@@ -42,6 +42,13 @@ export MINIMAX_M25_BASE_URL="http://your-mm:8000/v1"
 export QWEN35_122B_BASE_URL="http://your-qwen:8000/v1"
 ```
 
+The friendly `--model {glm|mm|qwen}` flag in the run scripts reads the matching
+variable: `glm` → `GLM45_AIR_BASE_URL`, `mm` → `MINIMAX_M25_BASE_URL`, `qwen` →
+`QWEN35_122B_BASE_URL` (each falls back to `OPENAI_API_BASE`, then
+`http://localhost:8000/v1`). So `./scripts/run.sh --model qwen …` (or
+`run_detection.sh` / `run_ambrosia.sh`) talks to whatever `QWEN35_122B_BASE_URL`
+points at — that one env var is how you say where your Qwen server lives.
+
 Manifests for vLLM servers serving each of the three open-weight models we
 used are under `k8s/`. Critical flags per model (see those files for the
 full launch command):
@@ -64,8 +71,9 @@ tab:agentic-nr-lite300, CLI flag in parens):
 - **Si-1 ∪ Mcs-1** (`--method union`) — Si-1 + a Multi-Candidate SQL call
   (single-pass, 10 interpretations from one call), round-robin interleaved.
 
-Expected wall-clock on a 2-GPU vLLM matching `k8s/vllm_server_*.yaml`:
-≈1-1.5 h per method on the lite-300 split.
+Expected wall-clock on a 2-GPU vLLM matching `k8s/vllm_server_*.yaml`, lite-300:
+baseline ≈1.5-2 h, `direct` ≈2-3.5 h, `union` ≈3 h per model (measured on our
+GLM-4.5-Air / MiniMax-M2.5 / Qwen3.5-122B reruns; faster endpoints are quicker).
 
 **Additional prerequisites:**
 
@@ -340,9 +348,11 @@ Method mapping (paper Table tab:ambrosia-main → CLI flag):
 | Union (Si-1 ∪ Mcs-10) | `union_mcs` | Si-1 ∪ 10 independent SQL samples at T=0.7. |
 | **Union (Si-1 ∪ Mcs-1)** | `union_spmi` | **Paper headline.** Si-1 ∪ single-pass Mcs-1 call (up to 10 interpretations from one call). |
 
-Expected wall-clock on the 3,819-sample test split (1,149 ambiguous): baseline
-≈5 min, Si-1 ≈25 min, Union (Si-1 ∪ Mcs-10) ≈45 min, Union (Si-1 ∪ Mcs-1)
-≈30 min.
+Expected wall-clock on the n=1,149 ambiguous samples (of the 3,819-sample test
+split): baseline ≈20 min, Si-1 ≈1.5 h, Union (Si-1 ∪ Mcs-10) ≈2.9 h, Union
+(Si-1 ∪ Mcs-1) ≈1.9 h. (Estimated by scaling measured 300-sample timings by
+~3.8x; AMBROSIA is per-sample parallel, so wall-clock scales ~linearly with
+sample count and inversely with endpoint concurrency.)
 
 **Run:**
 
