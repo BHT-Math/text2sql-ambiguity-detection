@@ -145,9 +145,26 @@ Methods (paper → CLI flag):
 - **Mcs-10** = `--method se_ast` — 10 independent SQL samples at T=0.7,
   AST-clustered (θ=0.70 by default).
 
-Expected wall-clock on lite-300 (300 samples, 8 threads): Si-1 ≈ 2-5 min,
-Si-10 ≈ 10-20 min, Mcs-1 ≈ 3-7 min, Mcs-10 ≈ 10-20 min. The post-hoc
-Si-1 ∪ Mcs-1 union (§ 2a) is free — no LLM calls.
+Expected wall-clock, lite-300 (300 samples, 8 threads). Cost is dominated by
+question GENERATION, so it scales with each method's call count (the encoder
+step is the cheap part):
+
+| Method | generation calls / sample      | full run (generate + encode) |
+|--------|--------------------------------|------------------------------|
+| Si-1  (direct)       | 1                        | ~20-40 min |
+| Mcs-1 (mga)          | 2 (1 multi-gen + 1 analysis) | ~1-2 h |
+| Si-10 (direct_multi) | 10 + 1 dedup             | ~3-5 h |
+| Mcs-10 (se_ast)      | 10 SQL samples + 1 analysis | ~8-12 h (longest) |
+
+(plus ~N encoder calls/sample, N = #questions). Anchored to GLM-4.5-Air with
+reasoning on a 2-GPU vLLM; `--no_thinking` and faster/smaller endpoints cut
+these substantially, and time scales inversely with endpoint concurrency.
+
+Those are **from-scratch** (generate + encode) times. The minute-scale path is
+**replay**: once a run's clarification questions already exist,
+`scripts/replay_encoder.sh` re-judges them with **encoder-only** calls (no
+generation) — roughly 10x cheaper for the 11-call methods (§ 2b). The post-hoc
+Si-1 ∪ Mcs-1 union (§ 2a) is free (no LLM calls).
 
 **Run:**
 

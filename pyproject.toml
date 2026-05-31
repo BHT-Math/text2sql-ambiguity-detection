@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bird-interact"
 version = "0.1.0"
-description = "Reproduction package for the paper 'Two Surfaces of Ambiguity: Complementary Detection for Text-to-SQL' — agentic (a-Interact), detection-only, and AMBROSIA cross-benchmark pipelines, run over the BIRD-Interact and AMBROSIA benchmarks."
+description = "Reproduction package for the paper 'Two Surfaces of Ambiguity: Complementary Detection for Text-to-SQL' — detection-only (Tables 5-7), agentic a-Interact (3x3 grid, lite-300), and AMBROSIA cross-benchmark pipelines."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"

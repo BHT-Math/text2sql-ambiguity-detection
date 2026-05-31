@@ -1,17 +1,8 @@
 # Two Surfaces of Ambiguity: Complementary Detection for Text-to-SQL
 
-Reproduction package for our paper of the same name. Standalone code for the
-three pipelines it reports; the numbers themselves live in the paper, and this
-package lets you reproduce them on your own infrastructure.
-
-The "two surfaces" are the two complementary detection channels implemented
-here — **Introspection** (Si, no SQL) and **Sampling-based** (Mcs, SQL) —
-whose per-term union is the paper's headline detector.
-
-> Built on the **BIRD-Interact** and **AMBROSIA** benchmarks (see
-> [Citation](#citation)). The Python package is still named `bird_interact`
-> for historical reasons, but this repository reproduces *our* paper, not the
-> BIRD-Interact paper.
+**Reproduction package** for our paper. Standalone code for the three pipelines
+it reports, evaluated on the BIRD-Interact and AMBROSIA benchmarks. The numbers
+live in the paper; this package lets you reproduce them on your own infrastructure.
 
 ## What's in here
 
@@ -89,15 +80,22 @@ setup, vLLM flags per model, and the AMBROSIA fetch), see `REPRODUCING.md`.
 
 ## Expected wall-clock
 
-Anchors so you can sanity-check before committing 4 hours of GPU time.
-All numbers are for the full lite-300 / AMBROSIA-1149-ambiguous splits on a
-single 2-GPU vLLM server matching the recipes in `k8s/vllm_server_*.yaml`.
+Anchors so you can sanity-check before committing GPU time (the 10-call
+detection methods are multi-hour). All numbers are for the full lite-300 /
+AMBROSIA-1149-ambiguous splits on a single 2-GPU vLLM server matching the
+recipes in `k8s/vllm_server_*.yaml`.
 
 | Pipeline (full split) | Si-1 / direct | Si-10 / direct_multi | Mcs-1 / mga | Mcs-10 / se_ast | Si-1 ∪ Mcs-1 / union |
 |---|---|---|---|---|---|
 | a-Interact lite-300 (300 samples) | ≈1-1.5 h | — | — | — | ≈1-1.5 h |
-| Detection-only lite-300 (300) | ≈2-5 min | ≈10-20 min | ≈3-7 min | ≈10-20 min | post-hoc (aggregator, no LLM calls) |
+| Detection-only lite-300 (300), from scratch | ~20-40 min | ~3-5 h | ~1-2 h | ~8-12 h | union is post-hoc (no LLM calls) |
 | AMBROSIA (1,149 ambiguous of 3,819) | ≈25 min | — | — | ≈45 min (union_mcs) | ≈30 min (union_spmi) |
+
+Detection-only figures are **from-scratch** runs (generation-dominated, scaling
+with the per-method call count). The **replay** path — `scripts/replay_encoder.sh`
+when the clarification questions already exist — is encoder-only and runs in
+**minutes** (~10x cheaper for the 11-call methods). Anchored to GLM-4.5-Air with
+reasoning; `--no_thinking` / faster endpoints are quicker. See `REPRODUCING.md` §2.
 
 Quick sanity-check NRs (a-Interact lite-300, paper Table tab:agentic-nr-lite300):
 GLM-4.5-Air baseline 13.2 % → union 16.0 %; MiniMax-M2.5 17.9 → 20.1;
@@ -140,16 +138,6 @@ Postgres image are governed by their respective upstream licenses.
 
 ## Citation
 
-If you use this code, please cite our paper:
-
-```bibtex
-@inproceedings{liu2026twosurfaces,
-  title     = {Two Surfaces of Ambiguity: Complementary Detection for Text-to-SQL},
-  author    = {Liu, Leonhard and Erdelt, Patrick K.},
-  year      = {2026},
-  booktitle = {AIDB @ VLDB 2026},
-}
-```
-
-It builds on two benchmarks — please also cite **BIRD-Interact**
-(`arXiv:2510.05318`) and **AMBROSIA** (Saparina & Lapata, NeurIPS 2024).
+If you use this code, please cite our paper, *Two Surfaces of Ambiguity:
+Complementary Detection for Text-to-SQL*, and the original BIRD-Interact
+benchmark (`arxiv:2510.05318`).
