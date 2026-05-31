@@ -1,0 +1,68 @@
+# BIRD-Interact detection-only pipeline (Tables 5-7 of the paper).
+#
+# This job runs all three detection methods (direct, mga, se_ast) for a
+# single agent model (Qwen3.5-122B) against a cross-model encoder
+# (MiniMax-M2.5). Other (detection × encoder) pairings are documented in
+# scripts/run_detection.sh.
+#
+# Replace before applying:
+#   <YOUR_BIRD_INTERACT_EVAL_IMAGE> — image built from docker/Dockerfile.
+#   vllm-qwen35-122b-service       — vLLM service name for the detection model.
+#   vllm-minimax-m25-service       — vLLM service name for the encoder.
+#
+# Unlike the a-Interact eval jobs this pipeline does NOT need Postgres
+# (no SQL execution, just question → encoder routing).
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bird-detection-qwen
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: wait-for-vllm
+        image: busybox:1.28
+        command:
+        - sh
+        - -c
+        - |
+          until nc -zv vllm-qwen35-122b-service 80; do echo 'Waiting for Qwen vLLM...'; sleep 5; done
+          until nc -zv vllm-minimax-m25-service 80; do echo 'Waiting for MM (encoder) vLLM...'; sleep 5; done
+      containers:
+      - name: detection
+        image: <YOUR_BIRD_INTERACT_EVAL_IMAGE>
+        imagePullPolicy: IfNotPresent
+        command: ["bash", "-c"]
+        args:
+        - |
+          set -eu
+          mkdir -p /app/results/detection
+          for METHOD in direct mga se_ast; do
+            echo "==== running detection-only: method=$METHOD ===="
+            ./scripts/run_detection.sh \
+              --method "$METHOD" \
+              --model  qwen \
+              --output "/app/results/detection/qwen_${METHOD}.json" \
+              --seed   64
+          done
+          echo "==== aggregating ===="
+          python -m bird_interact.detection_only.aggregate \
+            --input /app/results/detection/qwen_direct.json:direct \
+            --input /app/results/detection/qwen_mga.json:mga \
+            --input /app/results/detection/qwen_se_ast.json:se_ast \
+            --markdown /app/results/detection/qwen_summary.md \
+            --out_json /app/results/detection/qwen_summary.json
+        workingDir: /app
+        resources:
+          requests: {memory: 16Gi}
+          limits:   {memory: 48Gi}    # well above the 16Gi default; matches the launch checklist
+        env:
+        - name: QWEN35_122B_BASE_URL
+          value: "http://vllm-qwen35-122b-service:80/v1"
+        - name: MINIMAX_M25_BASE_URL
+          value: "http://vllm-minimax-m25-service:80/v1"
+        - name: OPENAI_API_BASE
+          value: "http://vllm-qwen35-122b-service:80/v1"
+      restartPolicy: Never
+  backoffLimit: 0

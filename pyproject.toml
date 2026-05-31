@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bird-interact"
+version = "0.1.0"
+description = "Reproduction package for the paper 'Two Surfaces of Ambiguity: Complementary Detection for Text-to-SQL' — agentic (a-Interact), detection-only, and AMBROSIA cross-benchmark pipelines, run over the BIRD-Interact and AMBROSIA benchmarks."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    # Runtime deps (full list pinned in requirements.txt for byte-exact reproduction).
+    # If pyproject is used standalone (rare), these are the must-haves.
+    "openai>=1.30",
+    "anthropic>=0.39",
+    "google-genai>=2.0",
+    "psycopg2-binary>=2.9",
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "scipy>=1.10",
+    "scikit-learn>=1.5",
+    "sqlglot>=26",
+    "sqlparse>=0.5",
+    "sqlfluff>=3",
+    "mo-sql-parsing>=8.205",
+    "tiktoken",
+    "jsonlines>=4",
+    "tqdm>=4.65",
+    "rich>=13",
+    "gymnasium>=1",
+    "func_timeout",
+    "z3-solver>=4.13",
+    "ordered-set",
+    "lark",
+    "ujson",
+    "prettytable",
+]
+
+[project.scripts]
+# Entry points all run via `python -m`:
+#   a-Interact:      bird_interact.agent.main
+#                    bird_interact.detection.run_direct_agentic
+#   Detection-only:  bird_interact.detection_only.pipeline
+#                    bird_interact.detection_only.aggregate
+#                    bird_interact.detection_only.replay_encoder
+#   AMBROSIA:        ambrosia.pipeline   (top-level package, independent of bird_interact)
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["bird_interact*", "ambrosia*"]

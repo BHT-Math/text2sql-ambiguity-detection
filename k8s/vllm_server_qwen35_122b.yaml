@@ -1,0 +1,86 @@
+# BIRD-Interact — vLLM server for Qwen3.5-122B-A10B (MoE)
+#
+# Targets 2× H200 (or 2× B200). Qwen3.5-122B is NOT a reasoning model with
+# <think> blocks — no reasoning-parser flag needed. We pass an explicit
+# chat template that defaults `enable_thinking=false` so the model goes
+# directly to action emission (matches the runs that produced our table).
+#
+# Prerequisite: BEFORE applying this manifest, create the chat-template
+# ConfigMap from the .jinja file shipped alongside this YAML:
+#
+#   kubectl create configmap qwen35-chat-template \
+#     --from-file=qwen35_no_think_chat_template.jinja=./k8s/qwen35_no_think_chat_template.jinja
+#
+# The Pod below mounts that ConfigMap at /chat-template (see volumes block).
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-qwen35-122b-service
+spec:
+  selector:
+    app: vllm-qwen35-122b-server
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-qwen35-122b-server
+  labels:
+    app: vllm-qwen35-122b-server
+spec:
+  containers:
+  - name: vllm-container
+    image: vllm/vllm-openai:latest
+    env:
+    - name: NCCL_SOCKET_IFNAME
+      value: eth0
+    - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
+      value: "1"
+    resources:
+      limits:
+        nvidia.com/gpu: "2"
+      requests:
+        nvidia.com/gpu: "2"
+    ports:
+    - containerPort: 8000
+      name: http
+    volumeMounts:
+    - name: dshm
+      mountPath: /dev/shm
+    - name: model-cache
+      mountPath: /root/.cache/huggingface
+    - name: chat-template
+      mountPath: /chat-template
+    command: ["/bin/bash", "-c"]
+    args:
+    - |
+      MODEL_REPO="Qwen/Qwen3.5-122B-A10B"
+      CHAT_TEMPLATE=/chat-template/qwen35_no_think_chat_template.jinja
+      python3 -m vllm.entrypoints.openai.api_server \
+        --model ${MODEL_REPO} \
+        --served-model-name qwen3.5-122b \
+        --tensor-parallel-size 2 \
+        --seed 42 \
+        --gpu-memory-utilization 0.90 \
+        --max-model-len 131072 \
+        --max-num-seqs 8 \
+        --max-num-batched-tokens 16384 \
+        --trust-remote-code \
+        --enable-expert-parallel \
+        --override-generation-config '{"max_new_tokens": 16384}' \
+        --chat-template ${CHAT_TEMPLATE} \
+        --port 8000
+  volumes:
+  - name: dshm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 64Gi
+  - name: model-cache
+    emptyDir: {}
+  - name: chat-template
+    configMap:
+      name: qwen35-chat-template

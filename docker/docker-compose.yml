@@ -1,0 +1,63 @@
+# BIRD-Interact reproduction package — docker-compose stack
+#
+# Two services:
+#   - postgres : pre-built database image with lite-300 schemas + data loaded
+#   - eval     : Python eval container (this repo's code + deps)
+#
+# Bring up:   docker-compose -f docker/docker-compose.yml up -d
+# Tear down:  docker-compose -f docker/docker-compose.yml down -v
+#
+# After `up`, the eval container has /app/scripts/run.sh available.
+
+version: "3.8"
+
+services:
+  postgres:
+    image: docker.io/shawnxxh/bird-interact-postgresql:latest
+    container_name: bird_interact_postgres
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: 123123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    command:
+      - "-c"
+      - "max_connections=300"
+      - "-c"
+      - "shared_buffers=256MB"
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  eval:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: bird_interact_eval
+    environment:
+      # Override at compose time or inside the container as needed.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: 123123
+      # LLM endpoint — point at your vLLM / OpenAI-compatible server.
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-http://host.docker.internal:8000/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-EMPTY}
+      # Optional: Gemini Vertex Express for the user-simulator encoder.
+      # If unset, fall back to GEMINI_API_KEY (free tier — note rate limits).
+      NEW_GEMINI: ${NEW_GEMINI:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      # Mount results dir so evaluation outputs survive container restarts.
+      - ../results:/app/results
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["tail", "-f", "/dev/null"]
+
+volumes:
+  postgres_data:

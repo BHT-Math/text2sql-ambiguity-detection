@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+*.egg
+build/
+dist/
+.venv/
+.mypy_cache/
+.pytest_cache/
+
+# Results and caches
+results/
+*.log
+detection_cache_*/
+*.cache.json
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Credentials (never commit)
+.env
+*.kube.env
+service_account*.json
+
+# Datasets are bring-your-own (see data/README.md); never commit them or symlinks to them.
+data/*
+!data/README.md

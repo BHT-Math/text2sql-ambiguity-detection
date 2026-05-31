@@ -1,0 +1,85 @@
+# BIRD-Interact — vLLM server for GLM-4.5-Air (FP8)
+#
+# This YAML targets 2× B200 (or similar 180GB-class GPUs). For different
+# hardware, adjust --tensor-parallel-size, --gpu-memory-utilization,
+# --max-num-seqs, --max-num-batched-tokens.
+#
+# Replace ${PLACEHOLDER} values before `kubectl apply`:
+#   ${NAMESPACE}        : your namespace (or remove the field to use current ctx)
+#   ${VLLM_IMAGE}       : a vLLM image with reasoning-parser support
+#                         (recent vllm/vllm-openai or your custom build)
+#   ${MODEL_PVC}        : optional PVC for HF cache (skip for ephemeral)
+#
+# CRITICAL FLAG:
+#   --reasoning-parser glm45 is required. Without it, <think> blocks stay in
+#   the response field, a small fraction of turns are actionless, and
+#   a-Interact NR is depressed. Even WITH the flag, a residual fraction of
+#   responses leak <think> due to parser non-determinism.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-glm45-air-service
+  # namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: vllm-glm45-air-server
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-glm45-air-server
+  # namespace: ${NAMESPACE}
+  labels:
+    app: vllm-glm45-air-server
+spec:
+  containers:
+  - name: vllm-container
+    image: vllm/vllm-openai:latest   # or: ${VLLM_IMAGE}
+    env:
+    - name: NCCL_SOCKET_IFNAME
+      value: eth0
+    - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
+      value: "1"
+    resources:
+      limits:
+        nvidia.com/gpu: "2"
+      requests:
+        nvidia.com/gpu: "2"
+    ports:
+    - containerPort: 8000
+      name: http
+    volumeMounts:
+    - name: dshm
+      mountPath: /dev/shm
+    - name: model-cache
+      mountPath: /root/.cache/huggingface
+    command: ["/bin/bash", "-c"]
+    args:
+    - |
+      MODEL_REPO="zai-org/GLM-4.5-Air-FP8"
+      python3 -m vllm.entrypoints.openai.api_server \
+        --model ${MODEL_REPO} \
+        --served-model-name glm-4.5-air \
+        --reasoning-parser glm45 \
+        --tensor-parallel-size 2 \
+        --seed 42 \
+        --gpu-memory-utilization 0.95 \
+        --max-model-len 131072 \
+        --max-num-seqs 16 \
+        --max-num-batched-tokens 16384 \
+        --trust-remote-code \
+        --enable-expert-parallel \
+        --override-generation-config '{"max_new_tokens": 24576}' \
+        --port 8000
+  volumes:
+  - name: dshm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 64Gi
+  - name: model-cache
+    emptyDir: {}   # or use a PVC: persistentVolumeClaim: { claimName: ${MODEL_PVC} }

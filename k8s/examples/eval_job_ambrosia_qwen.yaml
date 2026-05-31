@@ -1,0 +1,78 @@
+# AMBROSIA cross-benchmark pipeline (paper appendix tab:ambrosia-cross-model).
+#
+# This job runs all four AMBROSIA arms for Qwen3.5-122B against the full
+# AMBROSIA test split (n=3819, n=1149 ambiguous). The `union_spmi` arm is the
+# paper headline (Direct ∪ \MultiGen). Per-method wall-clock estimates on
+# 2× H200 vLLM: baseline ≈ 5 min, direct ≈ 25 min, union_mcs ≈ 45 min,
+# union_spmi ≈ 30 min. The bulk of cost is the Mcs channel (10 calls/sample
+# × n=3819) — union_spmi is faster because SPMI is one call.
+#
+# Replace before applying:
+#   <YOUR_BIRD_INTERACT_EVAL_IMAGE> — image built from docker/Dockerfile.
+#   vllm-qwen35-122b-service        — vLLM service name for Qwen3.5-122B.
+#   AMBROSIA_PVC                    — PVC that has data/ambrosia/
+#                                     mounted (ambrosia.csv + per-domain
+#                                     SQLite files; download instructions
+#                                     in REPRODUCING.md).
+#
+# Unlike the a-Interact eval jobs this pipeline does NOT need Postgres or a
+# user simulator. Coverage is scored against the per-sample SQLite DBs that
+# ship with AMBROSIA. Outputs land in /app/results/ambrosia/<arm>/eval.json.
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bird-ambrosia-qwen
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: wait-for-vllm
+        image: busybox:1.28
+        command:
+        - sh
+        - -c
+        - |
+          until nc -zv vllm-qwen35-122b-service 80; do echo 'Waiting for Qwen vLLM...'; sleep 5; done
+      containers:
+      - name: ambrosia
+        image: <YOUR_BIRD_INTERACT_EVAL_IMAGE>
+        imagePullPolicy: IfNotPresent
+        command: ["bash", "-c"]
+        args:
+        - |
+          set -eu
+          mkdir -p /app/results/ambrosia
+          for METHOD in baseline direct union_mcs union_spmi; do
+            echo "==== running AMBROSIA: method=$METHOD ===="
+            ./scripts/run_ambrosia.sh \
+              --method     "$METHOD" \
+              --model      qwen \
+              --output-dir "/app/results/ambrosia/qwen_${METHOD}"
+          done
+          echo "==== final summary (paper-canonical, exec-only) ===="
+          for arm in baseline direct union_mcs union_spmi; do
+            python -c "import json,sys; d=json.load(open(sys.argv[1])); s=d['summary']; print(f\"{sys.argv[2]:14s} | AF={s['all_found_rate']:.1%} | R={s['mean_recall']:.1%} | P={s['mean_precision']:.1%}\")" \
+              "/app/results/ambrosia/qwen_${arm}/eval.json" "$arm"
+          done
+        workingDir: /app
+        resources:
+          requests: {memory: 16Gi}
+          limits:   {memory: 48Gi}    # AMBROSIA is light; bumped above the 16Gi default
+        env:
+        - name: QWEN35_122B_BASE_URL
+          value: "http://vllm-qwen35-122b-service:80/v1"
+        - name: OPENAI_API_BASE
+          value: "http://vllm-qwen35-122b-service:80/v1"
+        - name: AMBROSIA_DIR
+          value: "/app/data/ambrosia"
+        volumeMounts:
+        - name: ambrosia-data
+          mountPath: /app/data/ambrosia
+          readOnly: true
+      volumes:
+      - name: ambrosia-data
+        persistentVolumeClaim:
+          claimName: AMBROSIA_PVC
+      restartPolicy: Never
+  backoffLimit: 0

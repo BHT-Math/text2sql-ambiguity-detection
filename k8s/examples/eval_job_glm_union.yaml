@@ -1,0 +1,75 @@
+# BIRD-Interact eval job: glm × union
+#
+# Replace before applying:
+#   <YOUR_BIRD_INTERACT_EVAL_IMAGE> — image built from docker/Dockerfile
+#                                     (or push docker/Dockerfile to your registry)
+#   vllm-glm45-air-service — vLLM service name from the matching k8s/vllm_server_*.yaml
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bird-glm-union
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: wait-for-vllm
+        image: busybox:1.28
+        command: ['sh', '-c', "until nc -zv vllm-glm45-air-service 80; do echo 'Waiting for vLLM...'; sleep 5; done;"]
+      containers:
+      - name: glm-union
+        image: <YOUR_BIRD_INTERACT_EVAL_IMAGE>
+        imagePullPolicy: IfNotPresent
+        command: ["bash", "-c"]
+        args:
+        - |
+          set -eu
+          mkdir -p /app/results/glm-union
+          exec python -m bird_interact.detection.run_direct_agentic \
+                --data_path /app/data/bird-interact-lite/bird_interact_data.jsonl \
+                --output_path /app/results/glm-union/evaluation_results.jsonl \
+                --agent_model glm-4.5-air-cluster \
+                --user_model glm-4.5-air-cluster \
+                --user_encoder_model gemini-3-1-flash-lite \
+                --user_sim_mode encoder_decoder \
+                --user_sim_prompt_version v2 \
+                --num_threads 8 \
+                --user_num_threads 8 \
+                --max_turns 60 \
+                --user_patience_budget 6 \
+                --max_tokens 24576 \
+                --log_level INFO \
+                --da_method union \
+                --da_mga_temperature 1.0 \
+                --da_no_ast true \
+                --da_hint_only true \
+                --da_clean_slate true \
+                --da_cache_dir /app/results/detection_cache_glm_union \
+                --da_base_url ${GLM45_AIR_BASE_URL} \
+                --da_model_id glm-4.5-air \
+                --resume
+        resources:
+          requests: {memory: 24Gi}
+          limits:   {memory: 96Gi}     # 16Gi default OOMs a-Interact around turn 15
+        env:
+        - name: POSTGRES_HOST
+          value: "postgres"
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          value: "root"
+        - name: POSTGRES_PASSWORD
+          value: "123123"
+        - name: GLM45_AIR_BASE_URL
+          value: "http://vllm-glm45-air-service:80/v1"
+        - name: OPENAI_API_BASE
+          value: "http://vllm-glm45-air-service:80/v1"
+        # Gemini Vertex Express creds for user-simulator encoder (cross-model).
+        # Set these via your secret-management of choice; the runs that produced
+        # our 3×3 grid used Vertex Express (NEW_GEMINI), not the free tier.
+        - name: GEMINI_API_KEY
+          valueFrom: {secretKeyRef: {name: gemini-creds, key: api_key, optional: true}}
+        - name: NEW_GEMINI
+          valueFrom: {secretKeyRef: {name: gemini-creds, key: new_gemini, optional: true}}
+      restartPolicy: Never
+  backoffLimit: 0

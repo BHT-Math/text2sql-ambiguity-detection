@@ -1,0 +1,72 @@
+# BIRD-Interact — vLLM server for MiniMax-M2.5 (FP8)
+#
+# CRITICAL FLAG:
+#   --reasoning-parser minimax_m2 is REQUIRED. Without it, <think> consumes
+#   the entire generation budget on hard samples and the model never emits
+#   <action>, causing 0% NR on the affected turns.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-minimax-m25-service
+spec:
+  selector:
+    app: vllm-minimax-m25-server
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-minimax-m25-server
+  labels:
+    app: vllm-minimax-m25-server
+spec:
+  containers:
+  - name: vllm-container
+    image: vllm/vllm-openai:latest
+    env:
+    - name: NCCL_SOCKET_IFNAME
+      value: eth0
+    - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
+      value: "1"
+    resources:
+      limits:
+        nvidia.com/gpu: "2"
+      requests:
+        nvidia.com/gpu: "2"
+    ports:
+    - containerPort: 8000
+      name: http
+    volumeMounts:
+    - name: dshm
+      mountPath: /dev/shm
+    - name: model-cache
+      mountPath: /root/.cache/huggingface
+    command: ["/bin/bash", "-c"]
+    args:
+    - |
+      MODEL_REPO="MiniMaxAI/MiniMax-M2.5"
+      python3 -m vllm.entrypoints.openai.api_server \
+        --model ${MODEL_REPO} \
+        --served-model-name minimax-m2.5 \
+        --reasoning-parser minimax_m2 \
+        --tensor-parallel-size 2 \
+        --seed 42 \
+        --gpu-memory-utilization 0.95 \
+        --max-model-len 131072 \
+        --max-num-seqs 8 \
+        --max-num-batched-tokens 16384 \
+        --trust-remote-code \
+        --enable-expert-parallel \
+        --override-generation-config '{"max_new_tokens": 24576}' \
+        --port 8000
+  volumes:
+  - name: dshm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 64Gi
+  - name: model-cache
+    emptyDir: {}

@@ -1,0 +1,67 @@
+# BIRD-Interact eval job: mm × baseline
+#
+# Replace before applying:
+#   <YOUR_BIRD_INTERACT_EVAL_IMAGE> — image built from docker/Dockerfile
+#                                     (or push docker/Dockerfile to your registry)
+#   vllm-minimax-m25-service — vLLM service name from the matching k8s/vllm_server_*.yaml
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bird-mm-baseline
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: wait-for-vllm
+        image: busybox:1.28
+        command: ['sh', '-c', "until nc -zv vllm-minimax-m25-service 80; do echo 'Waiting for vLLM...'; sleep 5; done;"]
+      containers:
+      - name: mm-baseline
+        image: <YOUR_BIRD_INTERACT_EVAL_IMAGE>
+        imagePullPolicy: IfNotPresent
+        command: ["bash", "-c"]
+        args:
+        - |
+          set -eu
+          mkdir -p /app/results/mm-baseline
+          exec python -m bird_interact.agent.main \
+                --data_path /app/data/bird-interact-lite/bird_interact_data.jsonl \
+                --output_path /app/results/mm-baseline/evaluation_results.jsonl \
+                --agent_model minimax-m25-cluster \
+                --user_model minimax-m25-cluster \
+                --user_encoder_model gemini-3-1-flash-lite \
+                --user_sim_mode encoder_decoder \
+                --user_sim_prompt_version v2 \
+                --num_threads 8 \
+                --user_num_threads 8 \
+                --max_turns 60 \
+                --user_patience_budget 6 \
+                --max_tokens 24576 \
+                --log_level INFO \
+                --resume
+        resources:
+          requests: {memory: 24Gi}
+          limits:   {memory: 96Gi}     # 16Gi default OOMs a-Interact around turn 15
+        env:
+        - name: POSTGRES_HOST
+          value: "postgres"
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          value: "root"
+        - name: POSTGRES_PASSWORD
+          value: "123123"
+        - name: MINIMAX_M25_BASE_URL
+          value: "http://vllm-minimax-m25-service:80/v1"
+        - name: OPENAI_API_BASE
+          value: "http://vllm-minimax-m25-service:80/v1"
+        # Gemini Vertex Express creds for user-simulator encoder (cross-model).
+        # Set these via your secret-management of choice; the runs that produced
+        # our 3×3 grid used Vertex Express (NEW_GEMINI), not the free tier.
+        - name: GEMINI_API_KEY
+          valueFrom: {secretKeyRef: {name: gemini-creds, key: api_key, optional: true}}
+        - name: NEW_GEMINI
+          valueFrom: {secretKeyRef: {name: gemini-creds, key: new_gemini, optional: true}}
+      restartPolicy: Never
+  backoffLimit: 0
