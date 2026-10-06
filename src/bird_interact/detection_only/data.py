@@ -35,6 +35,18 @@ def load_samples(data_path: str | Path) -> list[dict]:
     return samples
 
 
+MISSING_SOL_SQL_HINT = (
+    "The public BIRD-Interact release leaves sol_sql and test_cases empty. "
+    "Request the ground-truth file from the BIRD team and merge it with "
+    "upstream's combine_public_with_gt.py; see data/README.md."
+)
+
+
+def count_missing_sol_sql(samples: Iterable[dict]) -> int:
+    """Number of samples without a reference SQL (``sol_sql``)."""
+    return sum(1 for s in samples if not s.get("sol_sql"))
+
+
 def load_schema(db_name: str, data_dir: str | Path) -> str:
     p = Path(data_dir) / db_name / f"{db_name}_schema.txt"
     if not p.exists():
@@ -193,6 +205,13 @@ def kb_as_markdown(kb_entries: Iterable[dict]) -> str:
         if isinstance(e, dict) and e.get("definition"):
             lines.append(f"- {e.get('knowledge','')}: {e.get('definition','')}")
     return "\n".join(lines)
+
+
+def kb_as_agent_json(kb_entries: Iterable[dict]) -> str:
+    """KB as JSON with the fields the agent's get_all_knowledge_definitions() returns."""
+    fields = ("id", "knowledge", "description", "definition")
+    payload = [{k: e[k] for k in fields if k in e} for e in kb_entries if isinstance(e, dict)]
+    return json.dumps(payload, indent=2) if payload else ""
 
 
 def kb_as_json(kb_entries: Iterable[dict]) -> str:

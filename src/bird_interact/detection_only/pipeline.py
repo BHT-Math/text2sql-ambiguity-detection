@@ -53,9 +53,12 @@ from pathlib import Path
 from openai import OpenAI
 
 from .data import (
+    MISSING_SOL_SQL_HINT,
+    count_missing_sol_sql,
     extract_questions_from_response,
     filter_kb_for_sample,
     get_gt_terms,
+    kb_as_agent_json,
     kb_as_json,
     kb_as_markdown,
     load_column_meanings,
@@ -145,11 +148,15 @@ def _parse_mga_interpretations(content: str) -> list[str]:
     return out
 
 
-def _build_se_sampling_messages(question: str, schema: str, kb_entries: list[dict]) -> list[dict]:
+def _build_se_sampling_messages(
+    question: str, schema: str, kb_entries: list[dict], column_meanings: str,
+) -> list[dict]:
     user_parts = [f"## Database Schema\n{schema}"]
-    kb_md = kb_as_markdown(kb_entries)
-    if kb_md:
-        user_parts.append(f"## External Knowledge\n{kb_md}")
+    if column_meanings:
+        user_parts.append(f"## Column Meanings\n{column_meanings}")
+    kb_json = kb_as_agent_json(kb_entries)
+    if kb_json:
+        user_parts.append(f"## External Knowledge\n{kb_json}")
     user_parts.append(f"## Question\n{question}")
     return [
         {"role": "system", "content": SE_SAMPLING_SYSTEM_PROMPT},
@@ -365,7 +372,7 @@ def run_se_ast(
     max_tokens: int, extra_body: dict | None,
 ) -> dict:
     question = sample.get("amb_user_query") or sample.get("user_query") or ""
-    sampling_messages = _build_se_sampling_messages(question, schema, kb_entries)
+    sampling_messages = _build_se_sampling_messages(question, schema, kb_entries, column_meanings)
 
     sql_list: list[str | None] = []
     for _ in range(num_samples):
@@ -467,6 +474,7 @@ def _evaluate_detections(
     labeled_matches: set[str] = set()
     valid = 0
     fp = 0
+    encoder_errors = 0
     raw_judgments: list[dict] = []
 
     for det in detections:
@@ -497,6 +505,8 @@ def _evaluate_detections(
             valid += 1
         elif res["classification"] == "unanswerable":
             fp += 1
+        elif res["classification"] == "error":
+            encoder_errors += 1
 
     detected_gt = 0
     gt_details: list[dict] = []
@@ -512,6 +522,7 @@ def _evaluate_detections(
         "recall": detected_gt / len(gt_terms) if gt_terms else 0.0,
         "valid": valid,
         "fp": fp,
+        "encoder_errors": encoder_errors,
         "total_detections": len(detections),
         "labeled_matches": sorted(labeled_matches),
         "gt_terms": gt_details,
@@ -591,6 +602,12 @@ def _process_sample(
             base["detection"] = {"error": str(e), "total_gt": len(get_gt_terms(sample)),
                                  "detected_gt": 0, "recall": 0.0,
                                  "total_detections": len(detections)}
+            base["error"] = f"encoder: {e}"
+        n_enc_err = base["detection"].get("encoder_errors", 0)
+        if n_enc_err:
+            # A failed judgment can't credit its GT term, so this record's recall
+            # is understated. Flag it so --resume retries it.
+            base["error"] = f"encoder: {n_enc_err}/{len(detections)} judgments failed"
     else:
         gt = get_gt_terms(sample)
         base["detection"] = {
@@ -606,16 +623,44 @@ def _process_sample(
 
 # ── CLI ─────────────────────────────────────────────────────────────────
 
-def _load_partial(path: str | None) -> tuple[list[dict], set[str]]:
+# Settings that must match for --resume to reuse records from an existing output file.
+_RESUME_KEYS = (
+    "method", "model_id", "encoder_model_id", "encoder_kind", "seed",
+    "temperature", "num_samples", "num_interpretations", "direct_multi_num_samples",
+    "ast_threshold", "no_ast", "no_thinking", "user_sim_prompt_version", "analysis_prompt_file",
+)
+
+
+def _run_config(args) -> dict:
+    return {k: getattr(args, k) for k in _RESUME_KEYS}
+
+
+def _load_partial(path: str | None, config: dict) -> tuple[list[dict], set[str]]:
+    """Records to keep from an existing output file when resuming.
+
+    Exits if the file was written with different settings, so a new model or
+    method never inherits another run's records. Failed records are dropped so
+    they get retried.
+    """
     if not path or not os.path.exists(path):
         return [], set()
     try:
         with open(path) as f:
             blob = json.load(f)
-        results = blob.get("results") or []
-        return results, {r.get("instance_id", "") for r in results if r.get("instance_id")}
-    except Exception:
+    except Exception as e:
+        logger.warning(f"--resume: could not read {path} ({e}); starting fresh")
         return [], set()
+    # Older outputs have no "config" block; compare the header fields they do have.
+    saved = blob.get("config") or {
+        k: blob[k] for k in ("method", "model_id", "encoder_model_id", "encoder_kind", "seed") if k in blob
+    }
+    diff = {k: (saved[k], config[k]) for k in saved if k in config and saved[k] != config[k]}
+    if diff:
+        details = "; ".join(f"{k} is {old!r} in the file but {new!r} now" for k, (old, new) in diff.items())
+        raise SystemExit(f"--resume: {path} was written with different settings ({details}). "
+                         f"Choose another --output, or delete the file to start over.")
+    results = [r for r in (blob.get("results") or []) if not r.get("error")]
+    return results, {r.get("instance_id", "") for r in results if r.get("instance_id")}
 
 
 def _atomic_dump(path: str, blob: dict) -> None:
@@ -735,7 +780,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit is not None:
         all_samples = all_samples[: args.limit]
 
-    prior_results, done_ids = _load_partial(args.output if args.resume else None)
+    # The encoder prompt shows the reference SQL; without it the judge works
+    # from the ambiguity annotations alone. Not fatal, but not the paper's setup.
+    n_no_sql = count_missing_sol_sql(all_samples)
+    no_sql_msg = (f"{n_no_sql} of {len(all_samples)} samples have no reference SQL (sol_sql), "
+                  f"so the encoder prompt's SQL section is empty and its judgments will "
+                  f"differ from the paper's setup. {MISSING_SOL_SQL_HINT}")
+    if n_no_sql:
+        logger.warning(no_sql_msg)
+
+    config = _run_config(args)
+    prior_results, done_ids = _load_partial(args.output if args.resume else None, config)
     results: list[dict] = list(prior_results)
     todo = [s for s in all_samples if s.get("instance_id") not in done_ids]
     logger.info(f"Loaded {len(all_samples)} samples; {len(done_ids)} already done; "
@@ -767,6 +822,7 @@ def main(argv: list[str] | None = None) -> int:
                     "seed": args.seed, "n_total": len(all_samples),
                     "n_done": len(results),
                     "elapsed_sec": round(time.time() - start, 1),
+                    "config": config,
                     "results": results,
                 })
                 logger.info(f"  Saved checkpoint at {processed}/{len(todo)} "
@@ -777,10 +833,19 @@ def main(argv: list[str] | None = None) -> int:
         "encoder_kind": args.encoder_kind,
         "seed": args.seed, "n_total": len(all_samples), "n_done": len(results),
         "elapsed_sec": round(time.time() - start, 1),
+        "config": config,
         "results": results,
     })
     logger.info(f"DONE — wrote {len(results)} records to {args.output} "
                 f"in {time.time() - start:.1f}s")
+    if n_no_sql:
+        logger.warning(no_sql_msg)
+    failed = [r for r in results if r.get("error")]
+    if failed:
+        logger.error(f"{len(failed)} of {len(results)} records failed during generation or "
+                     f"encoding, so their recall is missing or understated. Rerun the same "
+                     f"command with --resume to retry only those records.")
+        return 1
     return 0
 
 

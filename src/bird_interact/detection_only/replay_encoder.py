@@ -48,7 +48,10 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from .data import filter_kb_for_sample, get_gt_terms, load_kb, load_schema, load_samples
+from .data import (
+    MISSING_SOL_SQL_HINT, count_missing_sol_sql, filter_kb_for_sample, get_gt_terms,
+    load_kb, load_schema, load_samples,
+)
 from .encoder import default_encoder_extra_body
 from .pipeline import _evaluate_detections
 
@@ -68,6 +71,10 @@ def _replay_one(
     iid = rec.get("instance_id", "?")
     detections = rec.get("extracted_detections") or []
     new = dict(rec)
+    # An encoder failure in the source run is about to be re-judged; a
+    # generation failure stays, since replay cannot repair it.
+    if str(new.get("error", "")).startswith("encoder"):
+        new.pop("error")
     try:
         if detections:
             new["detection"] = _evaluate_detections(
@@ -88,6 +95,10 @@ def _replay_one(
     except Exception as e:
         logger.exception(f"[{iid}] replay failed: {e}")
         new["detection"] = {"error": str(e)}
+        new["error"] = f"encoder: {e}"
+    n_enc_err = new["detection"].get("encoder_errors", 0)
+    if n_enc_err:
+        new["error"] = f"encoder: {n_enc_err}/{len(detections)} judgments failed"
     return new
 
 
@@ -123,6 +134,10 @@ def main(argv: list[str] | None = None) -> int:
 
     samples = load_samples(args.data_path)
     sample_by_id = _load_sample_by_id(samples)
+    n_no_sql = count_missing_sol_sql(samples)
+    if n_no_sql:
+        logger.warning(f"{n_no_sql} of {len(samples)} samples have no reference SQL (sol_sql), so "
+                       f"the encoder prompt's SQL section is empty. {MISSING_SOL_SQL_HINT}")
 
     enc_client = OpenAI(api_key=args.api_key, base_url=args.base_url)
     enc_extra = default_encoder_extra_body(force_no_thinking=args.encoder_no_thinking)
@@ -190,6 +205,11 @@ def main(argv: list[str] | None = None) -> int:
     Path(args.output).write_text(json.dumps(out_blob, indent=2))
     logger.info(f"DONE — wrote {len(out_records)} records (skipped {skipped} not-in-dataset) "
                 f"to {args.output} in {time.time() - start:.1f}s")
+    failed = [r for r in out_records if r.get("error")]
+    if failed:
+        logger.error(f"{len(failed)} of {len(out_records)} records have generation or encoder "
+                     f"failures, so their recall is missing or understated.")
+        return 1
     return 0
 
 

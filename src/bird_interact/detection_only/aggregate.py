@@ -155,6 +155,7 @@ def compute_file_metrics(blob: dict) -> dict:
         "precision_at_sample": (total_valid / total_dets) if total_dets else 0.0,
         "total_detections": total_dets,
         "total_valid_detections": total_valid,
+        "n_failed_records": sum(1 for r in records if r.get("error")),
         # Raw per-sample term map kept so union_file_metrics can OR the flags.
         "_per_sample_terms": _per_sample_term_detections(blob),
     }
@@ -226,12 +227,15 @@ def union_file_metrics(label_a: str, label_b: str, metrics: dict[str, dict]) -> 
 
 
 def parse_input_spec(spec: str) -> tuple[str, str]:
-    """`path` or `path:label` → (path, label)."""
-    if ":" in spec and not spec.startswith(("/", ".")) is False:
-        # also handle Windows-style absolute paths defensively
-        if spec.count(":") == 1 and spec.rsplit(":", 1)[1] and "/" not in spec.rsplit(":", 1)[1]:
-            path, label = spec.rsplit(":", 1)
-            return path, label
+    """`path` or `path:label` → (path, label).
+
+    The label is whatever follows the last colon, unless that part contains a
+    path separator — so a Windows drive prefix such as ``C:\\results\\x.json``
+    is kept as a plain path.
+    """
+    path, sep, label = spec.rpartition(":")
+    if sep and path and label and not any(c in label for c in "/\\"):
+        return path, label
     return spec, Path(spec).stem
 
 
@@ -333,6 +337,10 @@ def main(argv: list[str] | None = None) -> int:
             f"Impl {m['by_category']['Implementation']['recall']*100:4.1f}% / "
             f"Mask-kn {m['by_category']['Masked-knowledge']['recall']*100:4.1f}%)"
         )
+        if m["n_failed_records"]:
+            print(f"  WARNING: {label}: {m['n_failed_records']} record(s) failed during generation "
+                  f"or encoding, so their recall is missing or understated. Rerun the same "
+                  f"run_detection.sh command to retry them.", file=sys.stderr)
 
     # Per-term unions over already-loaded labels.
     for spec in args.union:

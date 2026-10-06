@@ -77,6 +77,11 @@ GLM-4.5-Air / MiniMax-M2.5 / Qwen3.5-122B reruns; faster endpoints are quicker).
 
 **Additional prerequisites:**
 
+The data file must contain the ground truth (reference SQL and test cases),
+which the public release leaves empty. Submissions are scored against it, so
+the runner stops at startup when it is missing. See `data/README.md` for how
+to request it and merge it in.
+
 ```bash
 # Postgres image with the 20 lite-300 databases preloaded
 ./scripts/load_postgres.sh    # pulls docker.io/shawnxxh/bird-interact-postgresql:latest
@@ -187,6 +192,13 @@ The wrapper applies the paper's cross-model encoder routing automatically:
 GLM/MiniMax detection → Qwen encoder; Qwen detection → MiniMax encoder.
 This is "no self-judging" — the encoder is a different model than the one
 generating the clarifications. Both endpoints need to be reachable.
+
+The wrapper always passes `--resume`. Rerunning the same command therefore
+continues an interrupted run and retries any sample whose generation or
+encoder calls failed. If any sample still fails, the run exits with status 1
+and says how many did. A run refuses to resume into an output file written
+with different settings (another model, method, encoder, seed or method
+knob), so give each configuration its own `--output`.
 
 If you do not have all three models deployed, use `--encoder-model`:
 

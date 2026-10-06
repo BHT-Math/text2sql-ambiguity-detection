@@ -15,6 +15,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
 from bird_interact.llm.call_api_batch import collect_response_from_api, load_jsonl
+from bird_interact.detection_only.data import MISSING_SOL_SQL_HINT, count_missing_sol_sql
 from bird_interact.db_config.db_config import set_global_db_config, reset_global_db_config
 from bird_interact.agent.sample_status import SampleStatus
 from bird_interact.agent.action_handler import (
@@ -415,6 +416,14 @@ def run_batch_evaluation(args):
 
     # Determine base path for data loading
     data_path_base = os.path.dirname(args.data_path)
+
+    # Submissions are scored against sol_sql / test_cases. Without them every
+    # submit fails and the run reports a reward of ~0, so stop before spending
+    # any LLM calls.
+    n_no_sql = count_missing_sol_sql(load_jsonl(args.data_path))
+    if n_no_sql:
+        sys.exit(f"ERROR: {n_no_sql} samples in {args.data_path} have no reference SQL "
+                 f"(sol_sql), so no submission could be scored. {MISSING_SOL_SQL_HINT}")
 
     # Check if resuming from existing run
     all_statuses = None

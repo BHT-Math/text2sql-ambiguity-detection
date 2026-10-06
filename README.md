@@ -35,7 +35,10 @@ rows use the `Si-N` / `Mcs-N` labels.
   vLLM with GLM-4.5-Air, MiniMax-M2.5, or Qwen3.5-122B (manifests under `k8s/`).
 - **The lite-300 dataset** for the agentic and detection-only pipelines —
   not bundled, fetch from `https://huggingface.co/datasets/birdsql/bird-interact-lite`.
-  See `data/README.md` for the expected layout.
+  The public release leaves the reference SQL and test cases empty. The agentic
+  pipeline cannot score without them, and the detection-only encoder uses the
+  reference SQL too. Request them from the BIRD team and merge them in as
+  described in `data/README.md`, which also shows the expected layout.
 - **A Postgres instance** for the agentic pipeline only — `./scripts/load_postgres.sh`
   pulls the upstream pre-built image.
 - **The AMBROSIA dataset** for the AMBROSIA pipeline only — fetch from
@@ -72,8 +75,12 @@ add the override flags (and `--encoder-model self` to judge on the same endpoint
 ```bash
 ./scripts/run_detection.sh --method direct --model qwen \
   --base-url "$YOUR_URL" --model-id "$YOUR_MODEL" \
-  --encoder-model self --output results/smoke.json --num-samples 5
+  --encoder-model self --output results/smoke_byo.json --num-samples 5
 ```
+
+Give each model or method its own `--output` file. `run_detection.sh` always
+resumes into an existing output file, and it stops with an error if that file
+was written with different settings.
 
 For the full per-pipeline procedure (including a-Interact's Postgres + Gemini
 setup, vLLM flags per model, and the AMBROSIA fetch), see `REPRODUCING.md`.
