@@ -30,3 +30,6 @@ service_account*.json
 # Datasets are bring-your-own (see data/README.md); never commit them or symlinks to them.
 data/*
 !data/README.md
+
+# Local agent instructions (not part of the release)
+CLAUDE.md
